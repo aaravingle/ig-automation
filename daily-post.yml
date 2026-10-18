@@ -1,0 +1,46 @@
+name: Daily Instagram post
+
+on:
+  schedule:
+    - cron: "30 14 * * *"  # 20:00 IST (cron is UTC)
+    - cron: "30 16 * * *"  # backup run at 22:00 IST; skipped if already posted
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate only, do not post"
+        type: boolean
+        default: true
+
+concurrency:
+  group: instagram-post
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write   # lets the job re-enable itself (GitHub pauses idle schedules)
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Post to Instagram
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          POST_TZ: Asia/Kolkata
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: python post.py
+
+      - name: Keep schedule enabled
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable daily-post.yml --repo "$GITHUB_REPOSITORY" || true

@@ -1,4 +1,4 @@
-name: Daily Instagram post
+name: Daily Instagram reel
 
 on:
   schedule:
@@ -22,7 +22,7 @@ permissions:
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +32,7 @@ jobs:
 
       - run: pip install requests
 
-      - name: Post to Instagram
+      - name: Post reel to Instagram
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           POST_TZ: Asia/Kolkata

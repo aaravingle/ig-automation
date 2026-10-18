@@ -1,4 +1,4 @@
-"""Post one image to Instagram per day via the Instagram API (Instagram Login).
+"""Post one Reel to Instagram per day via the Instagram API (Instagram Login).
 
 Safe to run several times a day: it skips if something was already posted today.
 Env: IG_ACCESS_TOKEN (required), POST_TZ, DRY_RUN=1, FORCE=1
@@ -16,11 +16,11 @@ API = "https://graph.instagram.com/v23.0"
 TOKEN = os.environ["IG_ACCESS_TOKEN"]
 TZ = zoneinfo.ZoneInfo(os.environ.get("POST_TZ", "Asia/Kolkata"))
 REPO = os.environ["GITHUB_REPOSITORY"]
-BRANCH = os.environ.get("GITHUB_REF_NAME", "main")
+REF = os.environ.get("GITHUB_SHA") or os.environ.get("GITHUB_REF_NAME", "main")
 DRY = os.environ.get("DRY_RUN") == "1"
 FORCE = os.environ.get("FORCE") == "1"
 TIMEOUT = 30
-MAX_IMAGE_BYTES = 8 * 1024 * 1024  # Instagram's JPEG limit is 8 MB
+MAX_VIDEO_BYTES = 50 * 1024 * 1024  # jsDelivr will not serve files above 50 MB
 
 
 def log(msg):
@@ -80,28 +80,31 @@ def posted_today():
     return False
 
 
-def pick_image():
+def pick_video():
     files = sorted(
-        glob.glob("images/*.jpg") + glob.glob("images/*.jpeg")
-        + glob.glob("images/*.JPG") + glob.glob("images/*.JPEG")
+        f for pattern in ("videos/*.mp4", "videos/*.MP4", "videos/*.mov", "videos/*.MOV")
+        for f in glob.glob(pattern)
     )
     if not files:
-        raise RuntimeError("No .jpg files found in images/ (empty state).")
+        raise RuntimeError("No .mp4/.mov files found in videos/ (empty state).")
     chosen = files[dt.datetime.now(TZ).date().toordinal() % len(files)]
-    url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/{chosen}"
+    size = os.path.getsize(chosen)
+    if size > MAX_VIDEO_BYTES:
+        raise RuntimeError(f"{chosen} is {size/1e6:.1f} MB; compress it below 50 MB.")
+    # Pinned to the exact commit, so CDN caching can never serve a stale file
+    url = f"https://cdn.jsdelivr.net/gh/{REPO}@{REF}/{chosen}"
     return chosen, url
 
 
-def check_image(url):
+def check_video_url(url):
     r = requests.get(url, stream=True, timeout=TIMEOUT)
     try:
         if r.status_code != 200:
-            raise RuntimeError(f"Image URL returned HTTP {r.status_code} (is the repo public?)")
-        if not r.headers.get("content-type", "").startswith("image/jpeg"):
-            raise RuntimeError(f"Image is not JPEG: {r.headers.get('content-type')}")
-        size = int(r.headers.get("content-length", 0))
-        if size > MAX_IMAGE_BYTES:
-            raise RuntimeError(f"Image too large: {size} bytes (max 8 MB)")
+            raise RuntimeError(
+                f"Video URL returned HTTP {r.status_code}. Is the repo public and pushed? "
+                "(jsDelivr can take a minute for brand-new commits.)"
+            )
+        log(f"Video URL OK ({r.headers.get('content-type')}, {r.headers.get('content-length')} bytes)")
     finally:
         r.close()
 
@@ -126,25 +129,28 @@ def main():
         return
 
     caption = read_caption()
-    path, url = pick_image()
+    path, url = pick_video()
     log(f"Using {path}")
-    check_image(url)
+    check_video_url(url)
 
     if DRY:
         log(f"DRY RUN OK. Would post {url} with {len(caption)}-char caption.")
         return
 
-    container = call("POST", "me/media", image_url=url, caption=caption)["id"]
+    container = call(
+        "POST", "me/media",
+        media_type="REELS", video_url=url, caption=caption, share_to_feed="true",
+    )["id"]
     log(f"Container created: {container}")
 
-    for _ in range(20):  # up to ~100 s
+    for _ in range(60):  # videos take longer to process: up to ~10 min
         status = call("GET", container, fields="status_code").get("status_code")
         log(f"Container status: {status}")
         if status == "FINISHED":
             break
         if status in ("ERROR", "EXPIRED"):
             raise RuntimeError(f"Container failed with status {status}")
-        time.sleep(5)
+        time.sleep(10)
     else:
         raise RuntimeError("Container never reached FINISHED (timeout).")
 
@@ -154,9 +160,9 @@ def main():
         log(f"Published! Media id {post_id}")
     except Exception as e:  # noqa: BLE001
         log(f"Publish call errored ({e}); checking whether it went through anyway...")
-        time.sleep(15)
+        time.sleep(20)
         if posted_today():
-            log("Post is live despite the error. Treating as success.")
+            log("Reel is live despite the error. Treating as success.")
             return
         raise
 

@@ -21,10 +21,25 @@ DRY = os.environ.get("DRY_RUN") == "1"
 FORCE = os.environ.get("FORCE") == "1"
 TIMEOUT = 30
 MAX_VIDEO_BYTES = 50 * 1024 * 1024  # jsDelivr will not serve files above 50 MB
+HC_URL = os.environ.get("HC_PING_URL", "").strip()  # optional Healthchecks.io ping URL
 
 
 def log(msg):
     print(str(msg).replace(TOKEN, "***"), flush=True)
+
+
+def ping(suffix=""):
+    """Tell Healthchecks.io we succeeded (or failed). Never breaks the run."""
+    if not HC_URL:
+        return
+    for _ in range(3):
+        try:
+            requests.get(HC_URL + suffix, timeout=10)
+            log(f"Healthchecks ping sent{suffix}")
+            return
+        except requests.RequestException as e:
+            log(f"Healthchecks ping failed: {e}")
+            time.sleep(3)
 
 
 def call(method, path, retries=3, **params):
@@ -170,6 +185,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+        if not DRY:
+            ping()
     except Exception as e:  # noqa: BLE001
         log(f"FAILED: {e}")
+        ping("/fail")
         sys.exit(1)

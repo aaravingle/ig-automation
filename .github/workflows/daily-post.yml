@@ -35,6 +35,7 @@ jobs:
       - name: Post reel to Instagram
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          HC_PING_URL: ${{ secrets.HC_PING_URL }}
           POST_TZ: Asia/Kolkata
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
         run: python post.py
